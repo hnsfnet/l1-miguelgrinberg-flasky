@@ -262,3 +262,109 @@ class APITestCase(unittest.TestCase):
         json_response = json.loads(response.get_data(as_text=True))
         self.assertIsNotNone(json_response.get('comments'))
         self.assertEqual(json_response.get('count', 0), 2)
+
+    def test_posts_author_filter(self):
+        # create two users
+        r = Role.query.filter_by(name='User').first()
+        self.assertIsNotNone(r)
+        u1 = User(email='john@example.com', username='john',
+                  password='cat', confirmed=True, role=r)
+        u2 = User(email='susan@example.com', username='susan',
+                  password='dog', confirmed=True, role=r)
+        db.session.add_all([u1, u2])
+        db.session.commit()
+
+        # john follows susan (john already self-follows via User.__init__)
+        u1.follow(u2)
+        db.session.commit()
+
+        # create posts by each user
+        p1 = Post(body='post by john', author=u1)
+        p2 = Post(body='post by susan', author=u2)
+        p3 = Post(body='another post by john', author=u1)
+        db.session.add_all([p1, p2, p3])
+        db.session.commit()
+
+        headers = self.get_api_headers('john@example.com', 'cat')
+
+        # --- global posts: no filter returns all ---
+        response = self.client.get('/api/v1/posts/', headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 3)
+
+        # --- global posts: filter by author_username ---
+        response = self.client.get(
+            '/api/v1/posts/?author_username=john', headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 2)
+        for post in json_response['posts']:
+            self.assertIn(str(u1.id), post['author_url'])
+
+        # --- global posts: filter by author_id ---
+        response = self.client.get(
+            '/api/v1/posts/?author_id={}'.format(u2.id), headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 1)
+
+        # --- global posts: nonexistent author_username ---
+        response = self.client.get(
+            '/api/v1/posts/?author_username=nobody', headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 0)
+        self.assertEqual(json_response['posts'], [])
+
+        # --- global posts: nonexistent author_id ---
+        response = self.client.get(
+            '/api/v1/posts/?author_id=9999', headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 0)
+        self.assertEqual(json_response['posts'], [])
+
+        # --- timeline: filter by followed author ---
+        response = self.client.get(
+            '/api/v1/users/{}/timeline/?author_username=susan'.format(u1.id),
+            headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 1)
+
+        # --- timeline: filter by self ---
+        response = self.client.get(
+            '/api/v1/users/{}/timeline/?author_username=john'.format(u1.id),
+            headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 2)
+
+        # --- timeline: filter by unfollowed author returns empty ---
+        u3 = User(email='alice@example.com', username='alice',
+                  password='bird', confirmed=True, role=r)
+        db.session.add(u3)
+        db.session.commit()
+        p4 = Post(body='post by alice', author=u3)
+        db.session.add(p4)
+        db.session.commit()
+
+        response = self.client.get(
+            '/api/v1/users/{}/timeline/?author_username=alice'.format(u1.id),
+            headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 0)
+        self.assertEqual(json_response['posts'], [])
+
+        # --- pagination links preserve filter params ---
+        self.app.config['FLASKY_POSTS_PER_PAGE'] = 1
+        response = self.client.get(
+            '/api/v1/posts/?author_username=john', headers=headers)
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 2)
+        self.assertEqual(len(json_response['posts']), 1)
+        self.assertIsNotNone(json_response['next'])
+        self.assertIn('author_username=john', json_response['next'])
