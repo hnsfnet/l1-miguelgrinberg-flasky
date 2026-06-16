@@ -3,21 +3,18 @@ from .. import db
 from ..models import Post, Permission, Comment
 from . import api
 from .decorators import permission_required
+from .pagination import get_per_page, pagination_links
 
 
 @api.route('/comments/')
 def get_comments():
     page = request.args.get('page', 1, type=int)
+    per_page = get_per_page('FLASKY_COMMENTS_PER_PAGE')
     pagination = Comment.query.order_by(Comment.timestamp.desc()).paginate(
-        page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
+        page=page, per_page=per_page,
         error_out=False)
     comments = pagination.items
-    prev = None
-    if pagination.has_prev:
-        prev = url_for('api.get_comments', page=page-1)
-    next = None
-    if pagination.has_next:
-        next = url_for('api.get_comments', page=page+1)
+    prev, next = pagination_links('api.get_comments', page, per_page, pagination)
     return jsonify({
         'comments': [comment.to_json() for comment in comments],
         'prev': prev,
@@ -36,16 +33,12 @@ def get_comment(id):
 def get_post_comments(id):
     post = Post.query.get_or_404(id)
     page = request.args.get('page', 1, type=int)
+    per_page = get_per_page('FLASKY_COMMENTS_PER_PAGE')
     pagination = post.comments.order_by(Comment.timestamp.asc()).paginate(
-        page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
+        page=page, per_page=per_page,
         error_out=False)
     comments = pagination.items
-    prev = None
-    if pagination.has_prev:
-        prev = url_for('api.get_post_comments', id=id, page=page-1)
-    next = None
-    if pagination.has_next:
-        next = url_for('api.get_post_comments', id=id, page=page+1)
+    prev, next = pagination_links('api.get_post_comments', page, per_page, pagination, id=id)
     return jsonify({
         'comments': [comment.to_json() for comment in comments],
         'prev': prev,

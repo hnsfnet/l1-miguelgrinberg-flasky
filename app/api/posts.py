@@ -4,21 +4,18 @@ from ..models import Post, Permission
 from . import api
 from .decorators import permission_required
 from .errors import forbidden
+from .pagination import get_per_page, pagination_links
 
 
 @api.route('/posts/')
 def get_posts():
     page = request.args.get('page', 1, type=int)
+    per_page = get_per_page('FLASKY_POSTS_PER_PAGE')
     pagination = Post.query.paginate(
-        page=page, per_page=current_app.config['FLASKY_POSTS_PER_PAGE'],
+        page=page, per_page=per_page,
         error_out=False)
     posts = pagination.items
-    prev = None
-    if pagination.has_prev:
-        prev = url_for('api.get_posts', page=page-1)
-    next = None
-    if pagination.has_next:
-        next = url_for('api.get_posts', page=page+1)
+    prev, next = pagination_links('api.get_posts', page, per_page, pagination)
     return jsonify({
         'posts': [post.to_json() for post in posts],
         'prev': prev,
