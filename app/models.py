@@ -304,6 +304,10 @@ class Post(db.Model):
             markdown(value, output_format='html'),
             tags=allowed_tags, strip=True))
 
+    @property
+    def visible_comment_count(self):
+        return self.comments.filter(Comment.disabled != True).count()
+
     def to_json(self):
         json_post = {
             'url': url_for('api.get_post', id=self.id),
@@ -312,7 +316,7 @@ class Post(db.Model):
             'timestamp': self.timestamp,
             'author_url': url_for('api.get_user', id=self.author_id),
             'comments_url': url_for('api.get_post_comments', id=self.id),
-            'comment_count': self.comments.count()
+            'comment_count': self.visible_comment_count
         }
         return json_post
 
@@ -353,6 +357,7 @@ class Comment(db.Model):
             'body_html': self.body_html,
             'timestamp': self.timestamp,
             'author_url': url_for('api.get_user', id=self.author_id),
+            'disabled': self.disabled or False,
         }
         return json_comment
 

@@ -8,7 +8,11 @@ from .decorators import permission_required
 @api.route('/comments/')
 def get_comments():
     page = request.args.get('page', 1, type=int)
-    pagination = Comment.query.order_by(Comment.timestamp.desc()).paginate(
+    if g.current_user.can(Permission.MODERATE):
+        query = Comment.query
+    else:
+        query = Comment.query.filter(Comment.disabled != True)
+    pagination = query.order_by(Comment.timestamp.desc()).paginate(
         page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
         error_out=False)
     comments = pagination.items
@@ -29,6 +33,8 @@ def get_comments():
 @api.route('/comments/<int:id>')
 def get_comment(id):
     comment = Comment.query.get_or_404(id)
+    if comment.disabled and not g.current_user.can(Permission.MODERATE):
+        return jsonify(comment.to_json()), 403
     return jsonify(comment.to_json())
 
 
@@ -36,7 +42,11 @@ def get_comment(id):
 def get_post_comments(id):
     post = Post.query.get_or_404(id)
     page = request.args.get('page', 1, type=int)
-    pagination = post.comments.order_by(Comment.timestamp.asc()).paginate(
+    if g.current_user.can(Permission.MODERATE):
+        query = post.comments
+    else:
+        query = post.comments.filter(Comment.disabled != True)
+    pagination = query.order_by(Comment.timestamp.asc()).paginate(
         page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
         error_out=False)
     comments = pagination.items
