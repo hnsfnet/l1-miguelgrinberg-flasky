@@ -1,7 +1,9 @@
 from datetime import datetime
 import hashlib
+import time
 from werkzeug.security import generate_password_hash, check_password_hash
-from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
+from sqlalchemy.orm import validates
+from itsdangerous import URLSafeTimedSerializer as Serializer
 from markdown import markdown
 import bleach
 from flask import current_app, request, url_for
@@ -118,13 +120,35 @@ class User(UserMixin, db.Model):
     def __init__(self, **kwargs):
         super(User, self).__init__(**kwargs)
         if self.role is None:
-            if self.email == current_app.config['FLASKY_ADMIN']:
+            if self.email == self.normalize_email(current_app.config['FLASKY_ADMIN']):
                 self.role = Role.query.filter_by(name='Administrator').first()
             if self.role is None:
                 self.role = Role.query.filter_by(default=True).first()
         if self.email is not None and self.avatar_hash is None:
             self.avatar_hash = self.gravatar_hash()
         self.follow(self)
+
+    @staticmethod
+    def normalize_email(email):
+        """Normalize an email address by stripping whitespace and lowering."""
+        if email is None:
+            return None
+        return email.strip().lower()
+
+    @staticmethod
+    def normalize_username(username):
+        """Normalize a username by stripping whitespace and lowering."""
+        if username is None:
+            return None
+        return username.strip().lower()
+
+    @validates('email')
+    def _validate_email(self, key, value):
+        return self.normalize_email(value)
+
+    @validates('username')
+    def _validate_username(self, key, value):
+        return self.normalize_username(value)
 
     @property
     def password(self):
@@ -138,31 +162,35 @@ class User(UserMixin, db.Model):
         return check_password_hash(self.password_hash, password)
 
     def generate_confirmation_token(self, expiration=3600):
-        s = Serializer(current_app.config['SECRET_KEY'], expiration)
-        return s.dumps({'confirm': self.id}).decode('utf-8')
+        s = Serializer(current_app.config['SECRET_KEY'])
+        return s.dumps({'confirm': self.id, 'exp': time.time() + expiration})
 
     def confirm(self, token):
         s = Serializer(current_app.config['SECRET_KEY'])
         try:
-            data = s.loads(token.encode('utf-8'))
+            data = s.loads(token)
         except:
             return False
         if data.get('confirm') != self.id:
+            return False
+        if data.get('exp', 0) < time.time():
             return False
         self.confirmed = True
         db.session.add(self)
         return True
 
     def generate_reset_token(self, expiration=3600):
-        s = Serializer(current_app.config['SECRET_KEY'], expiration)
-        return s.dumps({'reset': self.id}).decode('utf-8')
+        s = Serializer(current_app.config['SECRET_KEY'])
+        return s.dumps({'reset': self.id, 'exp': time.time() + expiration})
 
     @staticmethod
     def reset_password(token, new_password):
         s = Serializer(current_app.config['SECRET_KEY'])
         try:
-            data = s.loads(token.encode('utf-8'))
+            data = s.loads(token)
         except:
+            return False
+        if data.get('exp', 0) < time.time():
             return False
         user = User.query.get(data.get('reset'))
         if user is None:
@@ -172,21 +200,25 @@ class User(UserMixin, db.Model):
         return True
 
     def generate_email_change_token(self, new_email, expiration=3600):
-        s = Serializer(current_app.config['SECRET_KEY'], expiration)
+        s = Serializer(current_app.config['SECRET_KEY'])
         return s.dumps(
-            {'change_email': self.id, 'new_email': new_email}).decode('utf-8')
+            {'change_email': self.id, 'new_email': new_email,
+             'exp': time.time() + expiration})
 
     def change_email(self, token):
         s = Serializer(current_app.config['SECRET_KEY'])
         try:
-            data = s.loads(token.encode('utf-8'))
+            data = s.loads(token)
         except:
+            return False
+        if data.get('exp', 0) < time.time():
             return False
         if data.get('change_email') != self.id:
             return False
         new_email = data.get('new_email')
         if new_email is None:
             return False
+        new_email = self.normalize_email(new_email)
         if self.query.filter_by(email=new_email).first() is not None:
             return False
         self.email = new_email
@@ -205,7 +237,7 @@ class User(UserMixin, db.Model):
         db.session.add(self)
 
     def gravatar_hash(self):
-        return hashlib.md5(self.email.lower().encode('utf-8')).hexdigest()
+        return hashlib.md5(self.email.encode('utf-8')).hexdigest()
 
     def gravatar(self, size=100, default='identicon', rating='g'):
         url = 'https://secure.gravatar.com/avatar'
@@ -254,9 +286,8 @@ class User(UserMixin, db.Model):
         return json_user
 
     def generate_auth_token(self, expiration):
-        s = Serializer(current_app.config['SECRET_KEY'],
-                       expires_in=expiration)
-        return s.dumps({'id': self.id}).decode('utf-8')
+        s = Serializer(current_app.config['SECRET_KEY'])
+        return s.dumps({'id': self.id, 'exp': time.time() + expiration})
 
     @staticmethod
     def verify_auth_token(token):
@@ -264,6 +295,8 @@ class User(UserMixin, db.Model):
         try:
             data = s.loads(token)
         except:
+            return None
+        if data.get('exp', 0) < time.time():
             return None
         return User.query.get(data['id'])
 

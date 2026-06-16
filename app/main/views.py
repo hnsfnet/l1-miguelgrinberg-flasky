@@ -1,7 +1,10 @@
 from flask import render_template, redirect, url_for, abort, flash, request,\
     current_app, make_response
 from flask_login import login_required, current_user
-from flask_sqlalchemy import get_debug_queries
+try:
+    from flask_sqlalchemy import get_debug_queries
+except ImportError:
+    get_debug_queries = None
 from . import main
 from .forms import EditProfileForm, EditProfileAdminForm, PostForm,\
     CommentForm
@@ -12,12 +15,13 @@ from ..decorators import admin_required, permission_required
 
 @main.after_app_request
 def after_request(response):
-    for query in get_debug_queries():
-        if query.duration >= current_app.config['FLASKY_SLOW_DB_QUERY_TIME']:
-            current_app.logger.warning(
-                'Slow query: %s\nParameters: %s\nDuration: %fs\nContext: %s\n'
-                % (query.statement, query.parameters, query.duration,
-                   query.context))
+    if get_debug_queries is not None:
+        for query in get_debug_queries():
+            if query.duration >= current_app.config['FLASKY_SLOW_DB_QUERY_TIME']:
+                current_app.logger.warning(
+                    'Slow query: %s\nParameters: %s\nDuration: %fs\nContext: %s\n'
+                    % (query.statement, query.parameters, query.duration,
+                       query.context))
     return response
 
 
@@ -59,7 +63,7 @@ def index():
 
 @main.route('/user/<username>')
 def user(username):
-    user = User.query.filter_by(username=username).first_or_404()
+    user = User.query.filter_by(username=User.normalize_username(username)).first_or_404()
     page = request.args.get('page', 1, type=int)
     pagination = user.posts.order_by(Post.timestamp.desc()).paginate(
         page=page, per_page=current_app.config['FLASKY_POSTS_PER_PAGE'],
@@ -161,7 +165,7 @@ def edit(id):
 @login_required
 @permission_required(Permission.FOLLOW)
 def follow(username):
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter_by(username=User.normalize_username(username)).first()
     if user is None:
         flash('Invalid user.')
         return redirect(url_for('.index'))
@@ -178,7 +182,7 @@ def follow(username):
 @login_required
 @permission_required(Permission.FOLLOW)
 def unfollow(username):
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter_by(username=User.normalize_username(username)).first()
     if user is None:
         flash('Invalid user.')
         return redirect(url_for('.index'))
@@ -193,7 +197,7 @@ def unfollow(username):
 
 @main.route('/followers/<username>')
 def followers(username):
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter_by(username=User.normalize_username(username)).first()
     if user is None:
         flash('Invalid user.')
         return redirect(url_for('.index'))
@@ -210,7 +214,7 @@ def followers(username):
 
 @main.route('/followed_by/<username>')
 def followed_by(username):
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter_by(username=User.normalize_username(username)).first()
     if user is None:
         flash('Invalid user.')
         return redirect(url_for('.index'))
