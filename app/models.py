@@ -6,6 +6,7 @@ from markdown import markdown
 import bleach
 from flask import current_app, request, url_for
 from flask_login import UserMixin, AnonymousUserMixin
+from sqlalchemy.orm import validates
 from app.exceptions import ValidationError
 from . import db, login_manager
 
@@ -115,10 +116,31 @@ class User(UserMixin, db.Model):
                 db.session.add(user)
                 db.session.commit()
 
+    @staticmethod
+    def normalize_email(email):
+        if email:
+            return email.strip().lower()
+        return email
+
+    @staticmethod
+    def normalize_username(username):
+        if username:
+            return username.strip().lower()
+        return username
+
+    @validates('email')
+    def _validate_email(self, key, email):
+        return User.normalize_email(email)
+
+    @validates('username')
+    def _validate_username(self, key, username):
+        return User.normalize_username(username)
+
     def __init__(self, **kwargs):
         super(User, self).__init__(**kwargs)
         if self.role is None:
-            if self.email == current_app.config['FLASKY_ADMIN']:
+            if self.email == User.normalize_email(
+                    current_app.config['FLASKY_ADMIN']):
                 self.role = Role.query.filter_by(name='Administrator').first()
             if self.role is None:
                 self.role = Role.query.filter_by(default=True).first()
@@ -187,6 +209,7 @@ class User(UserMixin, db.Model):
         new_email = data.get('new_email')
         if new_email is None:
             return False
+        new_email = User.normalize_email(new_email)
         if self.query.filter_by(email=new_email).first() is not None:
             return False
         self.email = new_email
