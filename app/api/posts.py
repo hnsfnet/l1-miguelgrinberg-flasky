@@ -4,21 +4,31 @@ from ..models import Post, Permission
 from . import api
 from .decorators import permission_required
 from .errors import forbidden
+from .users import _resolve_author
 
 
 @api.route('/posts/')
 def get_posts():
     page = request.args.get('page', 1, type=int)
-    pagination = Post.query.paginate(
+    author_param = request.args.get('author')
+    author = _resolve_author(author_param)
+
+    query = Post.query
+    if author_param is not None:
+        if author is None:
+            return jsonify({'posts': [], 'prev': None, 'next': None, 'count': 0})
+        query = query.filter(Post.author_id == author.id)
+
+    pagination = query.paginate(
         page=page, per_page=current_app.config['FLASKY_POSTS_PER_PAGE'],
         error_out=False)
     posts = pagination.items
     prev = None
     if pagination.has_prev:
-        prev = url_for('api.get_posts', page=page-1)
+        prev = url_for('api.get_posts', page=page-1, author=author_param)
     next = None
     if pagination.has_next:
-        next = url_for('api.get_posts', page=page+1)
+        next = url_for('api.get_posts', page=page+1, author=author_param)
     return jsonify({
         'posts': [post.to_json() for post in posts],
         'prev': prev,
