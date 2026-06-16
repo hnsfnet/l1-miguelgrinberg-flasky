@@ -1,4 +1,5 @@
-from flask import jsonify, request, g, url_for, current_app
+from flask import jsonify, request, g, url_for, current_app, abort
+from sqlalchemy import or_
 from .. import db
 from ..models import Post, Permission, Comment
 from . import api
@@ -8,7 +9,11 @@ from .decorators import permission_required
 @api.route('/comments/')
 def get_comments():
     page = request.args.get('page', 1, type=int)
-    pagination = Comment.query.order_by(Comment.timestamp.desc()).paginate(
+    query = Comment.query
+    if not g.current_user.can(Permission.MODERATE):
+        query = query.filter(or_(Comment.disabled == None,
+                                 Comment.disabled == False))
+    pagination = query.order_by(Comment.timestamp.desc()).paginate(
         page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
         error_out=False)
     comments = pagination.items
@@ -29,6 +34,8 @@ def get_comments():
 @api.route('/comments/<int:id>')
 def get_comment(id):
     comment = Comment.query.get_or_404(id)
+    if comment.disabled and not g.current_user.can(Permission.MODERATE):
+        abort(404)
     return jsonify(comment.to_json())
 
 
@@ -36,7 +43,11 @@ def get_comment(id):
 def get_post_comments(id):
     post = Post.query.get_or_404(id)
     page = request.args.get('page', 1, type=int)
-    pagination = post.comments.order_by(Comment.timestamp.asc()).paginate(
+    comment_query = post.comments
+    if not g.current_user.can(Permission.MODERATE):
+        comment_query = comment_query.filter(or_(Comment.disabled == None,
+                                                  Comment.disabled == False))
+    pagination = comment_query.order_by(Comment.timestamp.asc()).paginate(
         page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
         error_out=False)
     comments = pagination.items

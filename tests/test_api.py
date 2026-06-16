@@ -262,3 +262,101 @@ class APITestCase(unittest.TestCase):
         json_response = json.loads(response.get_data(as_text=True))
         self.assertIsNotNone(json_response.get('comments'))
         self.assertEqual(json_response.get('count', 0), 2)
+
+    def test_disabled_comments(self):
+        # add a regular user and a moderator
+        r_user = Role.query.filter_by(name='User').first()
+        r_moderator = Role.query.filter_by(name='Moderator').first()
+        self.assertIsNotNone(r_user)
+        self.assertIsNotNone(r_moderator)
+        u_regular = User(email='regular@example.com', username='regular',
+                         password='cat', confirmed=True, role=r_user)
+        u_moderator = User(email='moderator@example.com', username='moderator',
+                           password='dog', confirmed=True, role=r_moderator)
+        db.session.add_all([u_regular, u_moderator])
+        db.session.commit()
+
+        # add a post
+        post = Post(body='body of the post', author=u_regular)
+        db.session.add(post)
+        db.session.commit()
+
+        # create two visible comments and one that will be disabled
+        c_visible1 = Comment(body='visible comment 1', author=u_regular,
+                             post=post)
+        c_visible2 = Comment(body='visible comment 2', author=u_regular,
+                             post=post)
+        c_disabled = Comment(body='this will be disabled', author=u_regular,
+                             post=post)
+        db.session.add_all([c_visible1, c_visible2, c_disabled])
+        db.session.commit()
+
+        # disable the third comment
+        c_disabled.disabled = True
+        db.session.add(c_disabled)
+        db.session.commit()
+
+        # regular user: GET /api/v1/comments/ should not include disabled
+        response = self.client.get(
+            '/api/v1/comments/',
+            headers=self.get_api_headers('regular@example.com', 'cat'))
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 2)
+        bodies = [c['body'] for c in json_response['comments']]
+        self.assertNotIn('this will be disabled', bodies)
+
+        # regular user: GET /api/v1/posts/<id>/comments/ should not include
+        # disabled
+        response = self.client.get(
+            '/api/v1/posts/{}/comments/'.format(post.id),
+            headers=self.get_api_headers('regular@example.com', 'cat'))
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 2)
+        bodies = [c['body'] for c in json_response['comments']]
+        self.assertNotIn('this will be disabled', bodies)
+
+        # regular user: GET /api/v1/comments/<id> for disabled comment -> 404
+        response = self.client.get(
+            '/api/v1/comments/{}'.format(c_disabled.id),
+            headers=self.get_api_headers('regular@example.com', 'cat'))
+        self.assertEqual(response.status_code, 404)
+
+        # regular user: GET /api/v1/comments/<id> for visible comment -> 200
+        # and to_json includes 'disabled' field
+        response = self.client.get(
+            '/api/v1/comments/{}'.format(c_visible1.id),
+            headers=self.get_api_headers('regular@example.com', 'cat'))
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertIn('disabled', json_response)
+        self.assertFalse(json_response['disabled'])
+
+        # moderator: GET /api/v1/comments/ should include disabled comment
+        response = self.client.get(
+            '/api/v1/comments/',
+            headers=self.get_api_headers('moderator@example.com', 'dog'))
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 3)
+        disabled_items = [c for c in json_response['comments']
+                          if c['disabled']]
+        self.assertEqual(len(disabled_items), 1)
+        self.assertEqual(disabled_items[0]['body'], 'this will be disabled')
+
+        # moderator: GET /api/v1/posts/<id>/comments/ includes disabled
+        response = self.client.get(
+            '/api/v1/posts/{}/comments/'.format(post.id),
+            headers=self.get_api_headers('moderator@example.com', 'dog'))
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertEqual(json_response['count'], 3)
+
+        # moderator: GET /api/v1/comments/<id> for disabled comment -> 200
+        response = self.client.get(
+            '/api/v1/comments/{}'.format(c_disabled.id),
+            headers=self.get_api_headers('moderator@example.com', 'dog'))
+        self.assertEqual(response.status_code, 200)
+        json_response = json.loads(response.get_data(as_text=True))
+        self.assertTrue(json_response['disabled'])

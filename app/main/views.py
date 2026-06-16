@@ -1,3 +1,4 @@
+from sqlalchemy import or_
 from flask import render_template, redirect, url_for, abort, flash, request,\
     current_app, make_response
 from flask_login import login_required, current_user
@@ -128,15 +129,20 @@ def post(id):
         flash('Your comment has been published.')
         return redirect(url_for('.post', id=post.id, page=-1))
     page = request.args.get('page', 1, type=int)
+    moderate = current_user.can(Permission.MODERATE)
+    comment_query = post.comments if moderate else \
+        post.comments.filter(or_(Comment.disabled == None,
+                                 Comment.disabled == False))
     if page == -1:
-        page = (post.comments.count() - 1) // \
+        page = (comment_query.count() - 1) // \
             current_app.config['FLASKY_COMMENTS_PER_PAGE'] + 1
-    pagination = post.comments.order_by(Comment.timestamp.asc()).paginate(
+    pagination = comment_query.order_by(Comment.timestamp.asc()).paginate(
         page=page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
         error_out=False)
     comments = pagination.items
     return render_template('post.html', posts=[post], form=form,
-                           comments=comments, pagination=pagination)
+                           comments=comments, pagination=pagination,
+                           moderate=moderate)
 
 
 @main.route('/edit/<int:id>', methods=['GET', 'POST'])
